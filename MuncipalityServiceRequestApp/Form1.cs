@@ -40,15 +40,16 @@ namespace MuncipalityServiceRequestApp
 
             Button btnLocalEvents = new Button
             {
-                Text = "Local Events and Announcements",
+                Text = "Local Events/Announcements",
                 Name = "btnLocalEvents",
                 Width = 260,
                 Height = 45,
                 Top = AppTheme.HeaderHeight + 90,
                 Left = 110,
-                Enabled = false
+                Enabled = true
             };
-            AppTheme.StyleDisabledButton(btnLocalEvents);
+            AppTheme.StylePrimaryButton(btnLocalEvents);
+            btnLocalEvents.Click += BtnLocalEvents_Click;
 
             Button btnServiceStatus = new Button
             {
@@ -58,13 +59,13 @@ namespace MuncipalityServiceRequestApp
                 Height = 45,
                 Top = AppTheme.HeaderHeight + 150,
                 Left = 110,
-                Enabled = false
+                Enabled = false // Part 3 — not yet built
             };
             AppTheme.StyleDisabledButton(btnServiceStatus);
 
             Label footerLabel = new Label
             {
-                Text = "Options b and c will be enabled in a future release.",
+                Text = "Service Request Status will be enabled in a future release.",
                 AutoSize = false,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Dock = DockStyle.Bottom,
@@ -76,7 +77,7 @@ namespace MuncipalityServiceRequestApp
             this.Controls.Add(btnLocalEvents);
             this.Controls.Add(btnServiceStatus);
             this.Controls.Add(footerLabel);
-            this.Controls.Add(header); // add last so it docks correctly on top
+            this.Controls.Add(header);
         }
 
         private void BtnReportIssues_Click(object sender, EventArgs e)
@@ -85,6 +86,14 @@ namespace MuncipalityServiceRequestApp
             reportForm.FormClosed += (s, args) => this.Show();
             this.Hide();
             reportForm.Show();
+        }
+
+        private void BtnLocalEvents_Click(object sender, EventArgs e)
+        {
+            LocalEventsForm eventsForm = new LocalEventsForm();
+            eventsForm.FormClosed += (s, args) => this.Show();
+            this.Hide();
+            eventsForm.Show();
         }
     }
 }
