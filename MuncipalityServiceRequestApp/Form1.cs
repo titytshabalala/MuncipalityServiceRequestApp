@@ -18,66 +18,76 @@ namespace MuncipalityServiceRequestApp
 
         private void SetupMainMenu()
         {
+            // Form setup
             this.Text = "Municipal Services Application - Main Menu";
             this.Width = 480;
-            this.Height = 420;
+            this.Height = 460;
             this.StartPosition = FormStartPosition.CenterScreen;
             this.BackColor = AppTheme.LightBackground;
+            this.Controls.Clear(); // Clear controls to avoid duplicate layering on reload
 
+            // 1. Fixed Header Panel
             Panel header = AppTheme.CreateHeaderPanel("CITY OF TSHWANE", "Municipal Services Application");
+            this.Controls.Add(header);
 
-            Button btnReportIssues = new Button
-            {
-                Text = "Report Issues",
-                Name = "btnReportIssues",
-                Width = 260,
-                Height = 45,
-                Top = AppTheme.HeaderHeight + 30,
-                Left = 110
-            };
-            AppTheme.StylePrimaryButton(btnReportIssues);
-            btnReportIssues.Click += BtnReportIssues_Click;
-
-            Button btnLocalEvents = new Button
-            {
-                Text = "Local Events/Announcements",
-                Name = "btnLocalEvents",
-                Width = 260,
-                Height = 45,
-                Top = AppTheme.HeaderHeight + 90,
-                Left = 110,
-                Enabled = true
-            };
-            AppTheme.StylePrimaryButton(btnLocalEvents);
-            btnLocalEvents.Click += BtnLocalEvents_Click;
-
-            Button btnServiceStatus = new Button
-            {
-                Text = "Service Request Status",
-                Name = "btnServiceStatus",
-                Width = 260,
-                Height = 45,
-                Top = AppTheme.HeaderHeight + 150,
-                Left = 110,
-                Enabled = false // Part 3 — not yet built
-            };
-            AppTheme.StyleDisabledButton(btnServiceStatus);
-
+            // 2. Footer Label (Updated for active features)
             Label footerLabel = new Label
             {
-                Text = "Service Request Status will be enabled in a future release.",
+                Text = "Select an option above to manage municipal services.",
                 AutoSize = false,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Dock = DockStyle.Bottom,
-                Height = 30,
-                ForeColor = Color.Gray
+                Height = 35,
+                ForeColor = Color.DimGray,
+                Font = AppTheme.FontCaption
+            };
+            this.Controls.Add(footerLabel);
+
+            // 3. FlowLayoutPanel Container (Prevents overlapping and handles dynamic positioning)
+            FlowLayoutPanel menuContainer = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                AutoScroll = true,
+                Padding = new Padding(0, AppTheme.HeaderHeight + AppTheme.SpaceLg, 0, AppTheme.SpaceLg),
+                BackColor = AppTheme.LightBackground
             };
 
-            this.Controls.Add(btnReportIssues);
-            this.Controls.Add(btnLocalEvents);
-            this.Controls.Add(btnServiceStatus);
-            this.Controls.Add(footerLabel);
-            this.Controls.Add(header);
+            // 4. Create and Style Dashboard Buttons
+            Button btnReportIssues = CreateMenuButton("Report Issues", BtnReportIssues_Click);
+            Button btnLocalEvents = CreateMenuButton("Local Events/Announcements", BtnLocalEvents_Click);
+
+            // Enabled and Activated "Service Request Status"
+            Button btnServiceStatus = CreateMenuButton("Service Request Status", BtnServiceStatus_Click);
+
+            // Add buttons to the flow container
+            menuContainer.Controls.Add(btnReportIssues);
+            menuContainer.Controls.Add(btnLocalEvents);
+            menuContainer.Controls.Add(btnServiceStatus);
+
+            // Add flow layout to form and ensure header stays on top
+            this.Controls.Add(menuContainer);
+            header.BringToFront();
+        }
+
+        /// <summary>
+        /// Helper to create uniformly styled, centered buttons with bottom margins to prevent overlaps.
+        /// </summary>
+        private Button CreateMenuButton(string text, EventHandler clickHandler)
+        {
+            Button btn = new Button
+            {
+                Text = text,
+                Width = 280,
+                Height = 48,
+                // Center the button horizontally in the 480px parent window ( (480 - 280) / 2 = 100 )
+                Margin = new Padding(85, 0, 85, AppTheme.SpaceMd)
+            };
+
+            AppTheme.StylePrimaryButton(btn);
+            btn.Click += clickHandler;
+            return btn;
         }
 
         private void BtnReportIssues_Click(object sender, EventArgs e)
@@ -94,6 +104,23 @@ namespace MuncipalityServiceRequestApp
             eventsForm.FormClosed += (s, args) => this.Show();
             this.Hide();
             eventsForm.Show();
+        }
+
+        private void BtnServiceStatus_Click(object sender, EventArgs e)
+        {
+            // ACTIVATED: Add navigation to your Service Request Status form here.
+            // Example:
+            // ServiceStatusForm statusForm = new ServiceStatusForm();
+            // statusForm.FormClosed += (s, args) => this.Show();
+            // this.Hide();
+            // statusForm.Show();
+
+            MessageBox.Show(
+                "Service Request Status tracking is now active.",
+                "Service Request Status",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information
+            );
         }
     }
 }

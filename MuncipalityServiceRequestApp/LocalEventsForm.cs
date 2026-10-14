@@ -235,9 +235,6 @@ namespace MuncipalityServiceRequestApp
             RefreshRecentlyViewedLabel();
         }
 
-        // Uses the category Dictionary for an O(1) starting point when a category
-        // filter is active, then walks the date-sorted dictionary so results come
-        // back in chronological order without re-sorting.
         private List<MunicipalEvent> FilterEvents(string? keyword, string? category, string? location)
         {
             IEnumerable<MunicipalEvent> source = (!string.IsNullOrEmpty(category)
