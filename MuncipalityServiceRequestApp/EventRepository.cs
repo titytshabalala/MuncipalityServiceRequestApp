@@ -4,11 +4,22 @@ using System.Linq;
 
 namespace MuncipalityServiceRequestApp
 {
+    /// <summary>
+    /// Event store with several indexes, each chosen for how it is queried:
+    ///   Dictionary ByCategory / ByLocation  - O(1) lookup of all events in a group
+    ///   SortedDictionary ByDate             - events already in date order
+    ///   HashSet Categories / Locations / EventDates - unique values for the filter lists
+    ///   BinaryHeap (GetByPriorityOrder)     - most urgent events first
+    /// </summary>
     public static class EventRepository
     {
         private static readonly List<MunicipalEvent> events = new List<MunicipalEvent>();
 
-        public static IReadOnlyList<MunicipalEvent> Events => events;
+        public static IReadOnlyList<MunicipalEvent> Events { get { return events; } }
+
+        public static Dictionary<int, MunicipalEvent> ById { get; private set; }
+            = new Dictionary<int, MunicipalEvent>();
+
         public static Dictionary<string, List<MunicipalEvent>> ByCategory { get; private set; }
             = new Dictionary<string, List<MunicipalEvent>>(StringComparer.OrdinalIgnoreCase);
 
@@ -24,9 +35,37 @@ namespace MuncipalityServiceRequestApp
         public static HashSet<string> Locations { get; private set; }
             = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        public static HashSet<DateTime> EventDates { get; private set; }
+            = new HashSet<DateTime>();
+
         static EventRepository()
         {
             SeedEvents();
+            RebuildIndexes();
+        }
+
+        public static void UpdateEvent(MunicipalEvent updatedEvent)
+        {
+            if (updatedEvent == null) throw new ArgumentNullException("updatedEvent");
+            MunicipalEvent existing = FindById(updatedEvent.Id);
+            if (existing == null) throw new ArgumentException("The event does not exist.");
+            events[events.IndexOf(existing)] = updatedEvent;
+            RebuildIndexes();
+        }
+
+        public static bool RemoveEvent(int id)
+        {
+            MunicipalEvent existing = FindById(id);
+            if (existing == null) return false;
+            events.Remove(existing);
+            RebuildIndexes();
+            return true;
+        }
+
+        public static void ReplaceAll(IEnumerable<MunicipalEvent> restoredEvents)
+        {
+            events.Clear();
+            if (restoredEvents != null) events.AddRange(restoredEvents.Where(e => e != null && e.Id > 0));
             RebuildIndexes();
         }
 
@@ -48,6 +87,8 @@ namespace MuncipalityServiceRequestApp
 
         public static void RebuildIndexes()
         {
+            ById = events.ToDictionary(e => e.Id);
+
             ByCategory = events
                 .GroupBy(e => e.Category, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
@@ -60,7 +101,8 @@ namespace MuncipalityServiceRequestApp
             foreach (MunicipalEvent ev in events)
             {
                 DateTime dateKey = ev.Date.Date;
-                if (!ByDate.TryGetValue(dateKey, out List<MunicipalEvent>? group))
+                List<MunicipalEvent> group;
+                if (!ByDate.TryGetValue(dateKey, out group))
                 {
                     group = new List<MunicipalEvent>();
                     ByDate[dateKey] = group;
@@ -70,32 +112,40 @@ namespace MuncipalityServiceRequestApp
 
             Categories = new HashSet<string>(events.Select(e => e.Category), StringComparer.OrdinalIgnoreCase);
             Locations = new HashSet<string>(events.Select(e => e.Location), StringComparer.OrdinalIgnoreCase);
+            EventDates = new HashSet<DateTime>(events.Select(e => e.Date.Date));
         }
 
-        
-        /// Return all events ordered by urgency
-        
+        public static MunicipalEvent FindById(int id)
+        {
+            MunicipalEvent ev;
+            return ById.TryGetValue(id, out ev) ? ev : null;
+        }
+
+        /// <summary>All events ordered by urgency (then date), by draining a binary heap.</summary>
         public static List<MunicipalEvent> GetByPriorityOrder()
         {
-            var queue = new PriorityQueue<MunicipalEvent, (EventPriority, DateTime)>(new EventPriorityComparer());
+            BinaryHeap<MunicipalEvent> heap = new BinaryHeap<MunicipalEvent>(new EventPriorityComparer());
+            foreach (MunicipalEvent ev in events) heap.Enqueue(ev);
 
-            foreach (MunicipalEvent ev in events)
-            {
-                queue.Enqueue(ev, (ev.Priority, ev.Date));
-            }
-
-            var ordered = new List<MunicipalEvent>();
-            while (queue.Count > 0)
-            {
-                ordered.Add(queue.Dequeue());
-            }
+            List<MunicipalEvent> ordered = new List<MunicipalEvent>(heap.Count);
+            while (heap.Count > 0) ordered.Add(heap.Dequeue());
             return ordered;
         }
 
         public static void AddEvent(MunicipalEvent newEvent)
         {
+            if (newEvent == null) throw new ArgumentNullException("newEvent");
+            if (string.IsNullOrWhiteSpace(newEvent.Title)) throw new ArgumentException("An event needs a title.");
+            if (events.Any(e => e.Id == newEvent.Id)) throw new ArgumentException("An event with this Id already exists.");
+
             events.Add(newEvent);
             RebuildIndexes();
+        }
+
+        /// <summary>Case-insensitive substring test (string.Contains with a comparison type does not exist on .NET Framework).</summary>
+        public static bool ContainsIgnoreCase(string source, string value)
+        {
+            return source != null && value != null && source.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 }

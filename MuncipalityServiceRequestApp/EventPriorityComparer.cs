@@ -1,15 +1,14 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 namespace MuncipalityServiceRequestApp
 {
-    
-    public class EventPriorityComparer : IComparer<(EventPriority Priority, DateTime Date)>
+    /// <summary>Orders events most urgent first, then soonest date first.</summary>
+    public class EventPriorityComparer : IComparer<MunicipalEvent>
     {
-        public int Compare((EventPriority Priority, DateTime Date) x, (EventPriority Priority, DateTime Date) y)
+        public int Compare(MunicipalEvent x, MunicipalEvent y)
         {
-            int priorityComparison = x.Priority.CompareTo(y.Priority);
-            return priorityComparison != 0 ? priorityComparison : x.Date.CompareTo(y.Date);
+            int priority = x.Priority.CompareTo(y.Priority);
+            return priority != 0 ? priority : x.Date.CompareTo(y.Date);
         }
     }
 }

@@ -1,224 +1,396 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
-using System.Collections.Generic;
 using System.Windows.Forms;
 
 namespace MuncipalityServiceRequestApp
 {
     public class ReportIssueForm : Form
     {
-        private TextBox txtLocation;
+        private const int MinDescriptionLength = 10;
+        private const int MaxDescriptionLength = 1000;
+        private const int MaxAttachments = 5;
+        private const long MaxAttachmentBytes = 10L * 1024 * 1024; // 10 MB
+        private static readonly string[] AllowedExtensions = { ".jpg", ".jpeg", ".png", ".pdf", ".docx" };
+        private static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png" };
+
+        private ComboBox cboLocation;
         private ComboBox cboCategory;
-        private RichTextBox rtbDescription;
+        private TextBox txtDescription;
+        private Label lblCharCount;
         private Button btnAttach;
-        private Label lblAttachedFiles;
+        private Button btnRemove;
+        private Label lblAttachInfo;
+        private ListBox lstAttachments;
+        private PictureBox picPreview;
         private ProgressBar progressBar;
         private Label lblEngagement;
         private Button btnSubmit;
         private Button btnBack;
 
+        // The list of files the user has attached to the report currently being written.
         private readonly List<string> attachedFilePaths = new List<string>();
 
         public ReportIssueForm()
         {
-            this.Text = "Report an Issue";
-            this.Width = 520;
-            this.Height = 620;
-            this.StartPosition = FormStartPosition.CenterScreen;
-            this.MinimumSize = new Size(480, 560);
-
-            SetupUi();
+            AppTheme.InitForm(this, "Report an Issue", 560, 720, 460, 520);
+            BuildUi();
+            OnInputChanged(this, EventArgs.Empty);
+            this.FormClosing += ReportIssueForm_FormClosing;
         }
 
-        private void SetupUi()
+        private static Label FieldLabel(string text)
         {
-            this.BackColor = AppTheme.LightBackground;
-            Panel header = AppTheme.CreateHeaderPanel("CITY OF TSHWANE", "Report an Issue");
+            return new Label { Text = text, AutoSize = true, Font = AppTheme.FontLabel, ForeColor = AppTheme.Black, Margin = new Padding(0, 0, 0, 3) };
+        }
 
-            int y = AppTheme.HeaderHeight + 20;
-            int labelHeight = 20;
-            int spacing = 10;
+        private void BuildUi()
+        {
+            Panel body = new Panel
+            {
+                Dock = DockStyle.Fill,
+                AutoScroll = true,
+                Padding = new Padding(AppTheme.SpaceLg, AppTheme.SpaceMd, AppTheme.SpaceLg, AppTheme.SpaceMd)
+            };
+            TableLayoutPanel form = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 1
+            };
+            form.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
 
-            Label lblLocation = new Label { Text = "Location:", Left = 20, Top = y, Width = 460, Height = labelHeight, ForeColor = AppTheme.Black };
-            y += labelHeight + 2;
-            txtLocation = new TextBox { Left = 20, Top = y, Width = 460, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-            txtLocation.TextChanged += OnInputChanged;
-            y += 30 + spacing;
+            AnchorStyles stretch = AnchorStyles.Left | AnchorStyles.Right;
+            Padding gap = new Padding(0, 0, 0, AppTheme.SpaceMd);
 
-            Label lblCategory = new Label { Text = "Category:", Left = 20, Top = y, Width = 460, Height = labelHeight, ForeColor = AppTheme.Black };
-            y += labelHeight + 2;
-            cboCategory = new ComboBox { Left = 20, Top = y, Width = 460, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            // --- Location (type freely, or pick a known service zone) ---
+            cboLocation = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDown,
+                Anchor = stretch,
+                Margin = gap,
+                MaxLength = 120,
+                AutoCompleteMode = AutoCompleteMode.SuggestAppend,
+                AutoCompleteSource = AutoCompleteSource.ListItems
+            };
+            cboLocation.Items.AddRange(ServiceZoneGraph.Default.Zones.Cast<object>().ToArray());
+            cboLocation.TextChanged += OnInputChanged;
+            form.Controls.Add(FieldLabel("Location *  (street address or area, e.g. \"12 Church St, Sunnyside\")"));
+            form.Controls.Add(cboLocation);
+
+            // --- Category ---
+            cboCategory = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = stretch, Margin = gap };
             cboCategory.Items.AddRange(new object[] { "Sanitation", "Roads", "Water & Utilities", "Electricity", "Public Safety", "Other" });
             cboCategory.SelectedIndexChanged += OnInputChanged;
-            y += 30 + spacing;
+            form.Controls.Add(FieldLabel("Category *"));
+            form.Controls.Add(cboCategory);
 
-            Label lblDescription = new Label { Text = "Description:", Left = 20, Top = y, Width = 460, Height = labelHeight, ForeColor = AppTheme.Black };
-            y += labelHeight + 2;
-            rtbDescription = new RichTextBox { Left = 20, Top = y, Width = 460, Height = 120, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-            rtbDescription.TextChanged += OnInputChanged;
-            y += 120 + spacing;
+            // --- Description ---
+            txtDescription = new TextBox
+            {
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                AcceptsReturn = true,
+                MaxLength = MaxDescriptionLength,
+                Height = 110,
+                Anchor = stretch,
+                Margin = new Padding(0, 0, 0, 2)
+            };
+            txtDescription.TextChanged += OnInputChanged;
+            lblCharCount = new Label { AutoSize = true, Anchor = AnchorStyles.Right, ForeColor = Color.DimGray, Font = AppTheme.FontCaption, Margin = gap };
+            form.Controls.Add(FieldLabel("Description * (at least " + MinDescriptionLength + " characters)"));
+            form.Controls.Add(txtDescription);
+            form.Controls.Add(lblCharCount);
 
-            btnAttach = new Button { Text = "Attach Image/Document", Left = 20, Top = y, Width = 200, Height = 32 };
+            // --- Attachments ---
+            form.Controls.Add(FieldLabel("Attachments (optional: JPG, PNG, PDF or DOCX, up to " + MaxAttachments + " files of 10 MB each)"));
+
+            FlowLayoutPanel attachButtons = new FlowLayoutPanel { AutoSize = true, Anchor = stretch, Margin = new Padding(0, 0, 0, 6), WrapContents = true };
+            btnAttach = new Button { Text = "Attach Image/Document", Width = 200, Height = 32 };
             AppTheme.StyleSecondaryButton(btnAttach);
             btnAttach.Click += BtnAttach_Click;
-            lblAttachedFiles = new Label { Text = "No files attached.", Left = 230, Top = y + 7, Width = 250, ForeColor = Color.Gray };
-            y += 32 + spacing;
+            btnRemove = new Button { Text = "Remove Selected", Width = 150, Height = 32, Enabled = false };
+            AppTheme.StyleSecondaryButton(btnRemove);
+            btnRemove.Click += BtnRemove_Click;
+            lblAttachInfo = new Label { AutoSize = true, ForeColor = Color.Gray, Margin = new Padding(8, 8, 0, 0) };
+            attachButtons.Controls.Add(btnAttach);
+            attachButtons.Controls.Add(btnRemove);
+            attachButtons.Controls.Add(lblAttachInfo);
+            form.Controls.Add(attachButtons);
 
-            progressBar = new ProgressBar { Left = 20, Top = y, Width = 460, Height = 20, Minimum = 0, Maximum = 100, Value = 0, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-            y += 20 + 4;
-            lblEngagement = new Label
-            {
-                Text = "Let's get started, tell us where the issue is.",
-                Left = 20,
-                Top = y,
-                Width = 460,
-                Height = 20,
-                Font = new Font("Segoe UI", 8.5F, FontStyle.Italic),
-                ForeColor = AppTheme.Green
-            };
-            y += 20 + spacing + 10;
+            TableLayoutPanel attachArea = new TableLayoutPanel { Anchor = stretch, AutoSize = true, ColumnCount = 2, RowCount = 1, Margin = gap };
+            attachArea.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            attachArea.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150F));
+            lstAttachments = new ListBox { Anchor = stretch, Height = 96, IntegralHeight = false, Margin = new Padding(0, 0, 8, 0) };
+            lstAttachments.SelectedIndexChanged += (s, e) => { btnRemove.Enabled = lstAttachments.SelectedIndex >= 0; UpdatePreview(); };
+            picPreview = new PictureBox { Size = new Size(142, 96), SizeMode = PictureBoxSizeMode.Zoom, BorderStyle = BorderStyle.FixedSingle, BackColor = Color.White, Margin = Padding.Empty };
+            attachArea.Controls.Add(lstAttachments, 0, 0);
+            attachArea.Controls.Add(picPreview, 1, 0);
+            form.Controls.Add(attachArea);
 
-            btnSubmit = new Button { Text = "Submit", Left = 20, Top = y, Width = 220, Height = 40, Enabled = false };
-            AppTheme.StyleDisabledButton(btnSubmit); // starts disable.
+            // --- Live progress / engagement feedback ---
+            progressBar = new ProgressBar { Anchor = stretch, Height = 20, Minimum = 0, Maximum = 100, Margin = new Padding(0, 0, 0, 4) };
+            lblEngagement = new Label { AutoSize = true, Font = new Font("Segoe UI", 9F, FontStyle.Italic), ForeColor = AppTheme.Green, Margin = gap };
+            form.Controls.Add(progressBar);
+            form.Controls.Add(lblEngagement);
+
+            // --- Buttons ---
+            TableLayoutPanel buttons = new TableLayoutPanel { Anchor = stretch, AutoSize = true, ColumnCount = 2, RowCount = 1 };
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            btnSubmit = new Button { Text = "Submit", Height = 42, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 6, 0) };
+            AppTheme.StyleDisabledButton(btnSubmit);
             btnSubmit.Click += BtnSubmit_Click;
-
-            btnBack = new Button { Text = "Back to Main Menu", Left = 260, Top = y, Width = 220, Height = 40 };
+            btnBack = new Button { Text = "Back to Main Menu", Height = 42, Dock = DockStyle.Fill, Margin = new Padding(6, 0, 0, 0) };
             AppTheme.StyleSecondaryButton(btnBack);
-            btnBack.Click += BtnBack_Click;
+            btnBack.Click += (s, e) => this.Close();
+            buttons.Controls.Add(btnSubmit, 0, 0);
+            buttons.Controls.Add(btnBack, 1, 0);
+            form.Controls.Add(buttons);
 
-            this.Controls.AddRange(new Control[]
-            {
-        lblLocation, txtLocation,
-        lblCategory, cboCategory,
-        lblDescription, rtbDescription,
-        btnAttach, lblAttachedFiles,
-        progressBar, lblEngagement,
-        btnSubmit, btnBack
-            });
-            this.Controls.Add(header);
+            body.Controls.Add(form);
+            // Fill first, header last so the header docks to the very top.
+            this.Controls.Add(body);
+            this.Controls.Add(AppTheme.CreateHeaderPanel("CITY OF TSHWANE", "Report an Issue"));
         }
+
+        // ---------- validation + live feedback ----------
+
+        private bool LocationFilled { get { return !string.IsNullOrWhiteSpace(cboLocation.Text); } }
+        private bool CategoryFilled { get { return cboCategory.SelectedIndex >= 0; } }
+        private bool DescriptionFilled { get { return txtDescription.Text.Trim().Length >= MinDescriptionLength; } }
 
         private void OnInputChanged(object sender, EventArgs e)
         {
-            int filled = 0;
-            if (!string.IsNullOrWhiteSpace(txtLocation.Text)) filled++;
-            if (cboCategory.SelectedIndex >= 0) filled++;
-            if (!string.IsNullOrWhiteSpace(rtbDescription.Text)) filled++;
+            int filled = (LocationFilled ? 1 : 0) + (CategoryFilled ? 1 : 0) + (DescriptionFilled ? 1 : 0);
 
-            int progress = filled * 33;
-            progressBar.Value = Math.Min(progress, 100);
+            progressBar.Value = filled == 3 ? 100 : filled * 33;
+            lblCharCount.Text = txtDescription.Text.Length + " / " + MaxDescriptionLength;
 
-            switch (filled)
+            if (filled == 0)
             {
-                case 0:
-                    lblEngagement.Text = "Let's get started, tell us where the issue is.";
-                    break;
-                case 1:
-                    lblEngagement.Text = "Great start! Now select a category.";
-                    break;
-                case 2:
-                    lblEngagement.Text = "Almost there! describe the issue.";
-                    break;
-                default:
-                    lblEngagement.Text = "All set! You're ready to submit.";
-                    break;
+                lblEngagement.Text = "Let's get started: tell us where the issue is.";
+            }
+            else if (filled == 3)
+            {
+                lblEngagement.Text = "All set! You're ready to submit.";
+            }
+            else
+            {
+                List<string> missing = new List<string>();
+                if (!LocationFilled) missing.Add("location");
+                if (!CategoryFilled) missing.Add("category");
+                if (!DescriptionFilled) missing.Add("a description (" + MinDescriptionLength + "+ characters)");
+                lblEngagement.Text = (filled == 1 ? "Great start! " : "Almost there! ") + "Still needed: " + string.Join(", ", missing) + ".";
             }
 
-            btnSubmit.Enabled = (filled == 3);
-            if (btnSubmit.Enabled)
-                AppTheme.StylePrimaryButton(btnSubmit);
-            else
-                AppTheme.StyleDisabledButton(btnSubmit);
+            AppTheme.SetPrimaryEnabled(btnSubmit, filled == 3);
         }
+
+        private bool HasUnsavedInput
+        {
+            get { return LocationFilled || CategoryFilled || txtDescription.Text.Trim().Length > 0 || attachedFilePaths.Count > 0; }
+        }
+
+        private void ReportIssueForm_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            if (e.CloseReason == CloseReason.UserClosing && HasUnsavedInput)
+            {
+                DialogResult answer = MessageBox.Show(
+                    "You have a report that has not been submitted. Leave without submitting?",
+                    "Discard report?",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question,
+                    MessageBoxDefaultButton.Button2);
+                if (answer != DialogResult.Yes) e.Cancel = true;
+            }
+        }
+
+        // ---------- attachments ----------
 
         private void BtnAttach_Click(object sender, EventArgs e)
         {
             using (OpenFileDialog dialog = new OpenFileDialog())
             {
                 dialog.Title = "Select images or documents related to the issue";
-                dialog.Filter = "Supported files (*.jpg;*.jpeg;*.png;*.pdf;*.docx)|*.jpg;*.jpeg;*.png;*.pdf;*.docx|All files (*.*)|*.*";
+                dialog.Filter = "Supported files (*.jpg;*.jpeg;*.png;*.pdf;*.docx)|*.jpg;*.jpeg;*.png;*.pdf;*.docx";
                 dialog.Multiselect = true;
+                dialog.CheckFileExists = true;
 
-                if (dialog.ShowDialog() == DialogResult.OK)
+                if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
-                    attachedFilePaths.AddRange(dialog.FileNames);
-                    RefreshAttachmentLabel();
+                    AddAttachments(dialog.FileNames);
                 }
             }
         }
 
-        private void RefreshAttachmentLabel()
+        private void AddAttachments(IEnumerable<string> paths)
         {
-            if (attachedFilePaths.Count == 0)
+            List<string> problems = new List<string>();
+
+            foreach (string path in paths)
             {
-                lblAttachedFiles.Text = "No files attached.";
-                lblAttachedFiles.ForeColor = Color.Gray;
+                string name = Path.GetFileName(path);
+                try
+                {
+                    if (attachedFilePaths.Count >= MaxAttachments)
+                    {
+                        problems.Add(name + ": the limit of " + MaxAttachments + " files has been reached.");
+                        continue;
+                    }
+                    if (!AllowedExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+                    {
+                        problems.Add(name + ": this file type is not supported.");
+                        continue;
+                    }
+                    if (attachedFilePaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+                    {
+                        problems.Add(name + ": already attached.");
+                        continue;
+                    }
+
+                    FileInfo info = new FileInfo(path);
+                    if (!info.Exists) { problems.Add(name + ": the file could not be found."); continue; }
+                    if (info.Length == 0) { problems.Add(name + ": the file is empty."); continue; }
+                    if (info.Length > MaxAttachmentBytes) { problems.Add(name + ": larger than 10 MB."); continue; }
+
+                    attachedFilePaths.Add(path);
+                }
+                catch (Exception ex)
+                {
+                    if (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException || ex is NotSupportedException)
+                        problems.Add(name + ": cannot be read (" + ex.Message + ").");
+                    else
+                        throw;
+                }
             }
-            else
+
+            RefreshAttachmentList();
+
+            if (problems.Count > 0)
             {
-                string names = string.Join(", ", attachedFilePaths.Select(Path.GetFileName));
-                lblAttachedFiles.Text = attachedFilePaths.Count + " file(s): " + names;
-                lblAttachedFiles.ForeColor = Color.DarkGreen;
+                MessageBox.Show("Some files were not attached:\n\n" + string.Join("\n", problems), "Attachment problem", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
+        private void BtnRemove_Click(object sender, EventArgs e)
+        {
+            int index = lstAttachments.SelectedIndex;
+            if (index < 0 || index >= attachedFilePaths.Count) return;
+            attachedFilePaths.RemoveAt(index);
+            RefreshAttachmentList();
+        }
+
+        private void RefreshAttachmentList()
+        {
+            lstAttachments.Items.Clear();
+            foreach (string path in attachedFilePaths) lstAttachments.Items.Add(Path.GetFileName(path));
+
+            lblAttachInfo.Text = attachedFilePaths.Count == 0
+                ? "No files attached."
+                : attachedFilePaths.Count + " of " + MaxAttachments + " files attached.";
+            lblAttachInfo.ForeColor = attachedFilePaths.Count == 0 ? Color.Gray : Color.DarkGreen;
+
+            if (lstAttachments.Items.Count > 0) lstAttachments.SelectedIndex = lstAttachments.Items.Count - 1;
+            btnRemove.Enabled = lstAttachments.SelectedIndex >= 0;
+            UpdatePreview();
+        }
+
+        private void UpdatePreview()
+        {
+            Image old = picPreview.Image;
+            picPreview.Image = null;
+            if (old != null) old.Dispose();
+
+            int index = lstAttachments.SelectedIndex;
+            if (index < 0 || index >= attachedFilePaths.Count) return;
+
+            string path = attachedFilePaths[index];
+            if (!ImageExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)) return; // PDF/DOCX: no preview
+
+            try
+            {
+                // Load a copy so the file on disk is not locked while the form is open.
+                using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (Image original = Image.FromStream(stream))
+                {
+                    picPreview.Image = new Bitmap(original);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Corrupt image, file moved or locked: keep the attachment but show no preview.
+                if (!(ex is IOException || ex is UnauthorizedAccessException || ex is OutOfMemoryException || ex is ArgumentException))
+                    throw;
+            }
+        }
+
+        // ---------- submit ----------
+
         private void BtnSubmit_Click(object sender, EventArgs e)
         {
-           
-            if (string.IsNullOrWhiteSpace(txtLocation.Text) ||
-                cboCategory.SelectedIndex < 0 ||
-                string.IsNullOrWhiteSpace(rtbDescription.Text))
+            if (!LocationFilled || !CategoryFilled || !DescriptionFilled)
             {
                 MessageBox.Show(
-                    "Please complete the location, category and description before submitting.",
-                    "Missing Information",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
+                    "Please complete the location, category and a description of at least " + MinDescriptionLength + " characters.",
+                    "Missing Information", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            Issue issue = new Issue
+            // Attachments are stored as paths, so make sure none were moved or deleted since they were added.
+            List<string> missing = attachedFilePaths.Where(p => !File.Exists(p)).ToList();
+            if (missing.Count > 0)
             {
-                Location = txtLocation.Text.Trim(),
-                Category = cboCategory.SelectedItem.ToString(),
-                Description = rtbDescription.Text.Trim(),
-                AttachmentPaths = new List<string>(attachedFilePaths),
-                DateReported = DateTime.Now,
-                Status = "Logged"
-            };
+                foreach (string path in missing) attachedFilePaths.Remove(path);
+                RefreshAttachmentList();
+                MessageBox.Show(
+                    "These attachments can no longer be found and were removed:\n\n" + string.Join("\n", missing.Select(Path.GetFileName)) +
+                    "\n\nAttach them again if you still need them, then submit.",
+                    "Attachment missing", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
 
-            IssueRepository.Issues.Add(issue);
-            int referenceNumber = IssueRepository.Issues.Count;
+            AppTheme.SetPrimaryEnabled(btnSubmit, false); // guards against a double click creating two reports
+            try
+            {
+                Issue issue = IssueRepository.Add(cboLocation.Text, cboCategory.SelectedItem.ToString(), txtDescription.Text, attachedFilePaths);
+                AppDataStore.Save();
 
-            MessageBox.Show(
-                "Thank you! Your issue has been logged successfully.\n\n" +
-                "Reference #: " + referenceNumber + "\n" +
-                "Status: " + issue.Status,
-                "Report Submitted",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
+                string zoneNote = issue.Zone != null
+                    ? "Service zone: " + issue.Zone
+                    : "Service zone: not recognised (a coordinator will route this request)";
 
-            ResetForm();
+                MessageBox.Show(
+                    "Thank you! Your issue has been logged successfully.\n\n" +
+                    "Reference #: " + issue.ReferenceNumber + "\n" +
+                    "Priority: " + issue.Priority + "\n" +
+                    "Status: " + Issue.StatusText(issue.Status) + "\n" +
+                    zoneNote + "\n" +
+                    "Attachments: " + issue.AttachmentPaths.Count + "\n\n" +
+                    "Use \"Service Request Status\" on the main menu to track it.",
+                    "Report Submitted", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                ResetForm();
+            }
+            catch (ArgumentException ex)
+            {
+                MessageBox.Show(ex.Message, "Could not submit", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                OnInputChanged(this, EventArgs.Empty);
+            }
         }
 
         private void ResetForm()
         {
-            txtLocation.Clear();
+            cboLocation.Text = string.Empty;
             cboCategory.SelectedIndex = -1;
-            rtbDescription.Clear();
+            txtDescription.Clear();
             attachedFilePaths.Clear();
-            RefreshAttachmentLabel();
-            progressBar.Value = 0;
-            lblEngagement.Text = "Let's get started, tell us where the issue is.";
-            btnSubmit.Enabled = false;
-            txtLocation.Focus();
-        }
-
-        private void BtnBack_Click(object sender, EventArgs e)
-        {
-            this.Close();
+            RefreshAttachmentList();
+            OnInputChanged(this, EventArgs.Empty);
+            cboLocation.Focus();
         }
     }
 }
